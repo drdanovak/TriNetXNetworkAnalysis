@@ -33,7 +33,6 @@ if uploaded_file is not None:
     with st.expander("📋 Raw Data Preview"):
         st.dataframe(df.head())
 
-    # Time filter
     start_date = st.date_input("Start Date", df['Date'].min().date())
     end_date = st.date_input("End Date", df['Date'].max().date())
     slice_freq = st.selectbox("Select Time Slice", ["M", "Q", "6M", "A"], index=0, format_func=lambda x: {
@@ -59,7 +58,6 @@ if uploaded_file is not None:
         st.warning("⚠️ 'Project_ID' column not found in the data.")
         st.stop()
 
-    # NETWORK CONSTRUCTION
     B = nx.Graph()
     user_nodes = df['User_ID'].unique()
     project_nodes = df['Project_ID'].unique()
@@ -76,7 +74,6 @@ if uploaded_file is not None:
             for user in group:
                 cluster_map[user] = i
 
-    # Degree and centrality
     degree_dict = dict(user_graph.degree())
     centrality = nx.betweenness_centrality(user_graph)
     df_metrics = pd.DataFrame({
@@ -105,8 +102,10 @@ if uploaded_file is not None:
             URIM_Count=('URIM', 'sum'),
             FirstGen_Count=('FirstGen', 'sum')
         ).reset_index()
-        eq_stats['URIM_%'] = eq_stats['URIM_Count'] / eq_stats['Total']
-        eq_stats['FirstGen_%'] = eq_stats['FirstGen_Count'] / eq_stats['Total']
+        eq_stats['URIM_%'] = eq_stats.apply(
+            lambda row: row['URIM_Count'] / row['Total'] if row['Total'] > 0 else 0, axis=1)
+        eq_stats['FirstGen_%'] = eq_stats.apply(
+            lambda row: row['FirstGen_Count'] / row['Total'] if row['Total'] > 0 else 0, axis=1)
         st.dataframe(eq_stats)
 
     with st.expander("📈 Student Entry & Duration Tracking", expanded=False):
