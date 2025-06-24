@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import networkx as nx
@@ -7,6 +6,8 @@ import tempfile
 import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+from networkx.algorithms.community import greedy_modularity_communities
 
 st.set_page_config(page_title="TriNetX Collaboration Dashboard", layout="wide")
 
@@ -17,6 +18,8 @@ uploaded_file = st.file_uploader("Upload TriNetX Usage Log CSV", type=["csv"])
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
     df['Date'] = pd.to_datetime(df['Date'])
+
+    st.write("Available columns:", df.columns.tolist())
 
     with st.expander("🔍 Preview & Filter Data"):
         st.dataframe(df.head())
@@ -29,97 +32,63 @@ if uploaded_file is not None:
     st.sidebar.subheader("Subnetwork Filters")
     urim_only = st.sidebar.checkbox("URIM Only")
     firstgen_only = st.sidebar.checkbox("FirstGen Only")
-    project_filter = st.sidebar.multiselect("Filter by Project ID", sorted(df['Project ID'].unique()))
+    instance_filter = st.sidebar.multiselect("Filter by Instance", sorted(df['Instance'].unique()))
+    enable_clustering = st.sidebar.checkbox("Auto-Cluster Users (Community Detection)", value=True)
 
     if urim_only:
         df = df[df['URIM'] == True]
     if firstgen_only:
         df = df[df['FirstGen'] == True]
-    if project_filter:
-        df = df[df['Project ID'].isin(project_filter)]
+    if instance_filter:
+        df = df[df['Instance'].isin(instance_filter)]
 
     B = nx.Graph()
-    user_nodes = df['User ID'].unique()
-    project_nodes = df['Project ID'].unique()
+    user_nodes = df['User'].unique()
+    instance_nodes = df['Instance'].unique()
     B.add_nodes_from(user_nodes, bipartite=0, type='user')
-    B.add_nodes_from(project_nodes, bipartite=1, type='project')
+    B.add_nodes_from(instance_nodes, bipartite=1, type='instance')
 
     for _, row in df.iterrows():
-        B.add_edge(row['User ID'], row['Project ID'])
+        B.add_edge(row['User'], row['Instance'])
 
     user_graph = nx.projected_graph(B, user_nodes)
 
+    # Community detection
+    cluster_map = {}
+    if enable_clustering:
+        communities = list(greedy_modularity_communities(user_graph))
+        for i, group in enumerate(communities):
+            for user in group:
+                cluster_map[user] = i
+
+    # Build metrics
     degree_dict = dict(user_graph.degree())
     centrality = nx.betweenness_centrality(user_graph)
     df_metrics = pd.DataFrame({
-        "User ID": list(degree_dict.keys()),
+        "User": list(degree_dict.keys()),
         "Degree": list(degree_dict.values()),
-        "Betweenness Centrality": [centrality[u] for u in degree_dict.keys()]
+        "Betweenness Centrality": [centrality[u] for u in degree_dict.keys()],
+        "Cluster": [cluster_map.get(u, -1) for u in degree_dict.keys()]
     })
-    merged_df = pd.merge(df_metrics, df[['User ID', 'Role', 'URIM', 'FirstGen']].drop_duplicates(), on="User ID", how="left")
+    merged_df = pd.merge(df_metrics, df[['User', 'Role', 'URIM', 'FirstGen']].drop_duplicates(), on="User", how="left")
 
     st.subheader("📋 Collaboration Metrics Table")
     st.dataframe(merged_df)
     st.download_button("📥 Download Metrics Table", data=merged_df.to_csv(index=False), file_name="metrics.csv")
 
-    st.subheader("📊 Co-authorship Heatmap")
-    coauthorship = pd.crosstab(df['User ID'], df['Project ID'])
-    co_matrix = coauthorship.dot(coauthorship.T)
-    co_matrix[co_matrix < 2] = 0
-    fig_hm, ax_hm = plt.subplots(figsize=(10, 8))
-    sns.heatmap(co_matrix, cmap="Blues", ax=ax_hm)
-    ax_hm.set_title("Co-authorship Heatmap")
-    st.pyplot(fig_hm)
-
-    st.subheader("📈 User Centrality Over Time")
-    centrality_times = []
-    for date in pd.date_range(df['Date'].min(), df['Date'].max(), freq='M'):
-        temp_df = df[df['Date'] <= date]
-        temp_B = nx.Graph()
-        temp_B.add_nodes_from(temp_df['User ID'].unique())
-        for _, row in temp_df.iterrows():
-            temp_B.add_edge(row['User ID'], row['Project ID'])
-        temp_graph = nx.projected_graph(temp_B, temp_df['User ID'].unique())
-        central = nx.betweenness_centrality(temp_graph)
-        for user, cent in central.items():
-            centrality_times.append({'User ID': user, 'Date': date, 'Centrality': cent})
-    centrality_df = pd.DataFrame(centrality_times)
-
-    selected_user_ct = st.selectbox("Select a User ID for longitudinal centrality view", sorted(df['User ID'].unique()))
-    user_centrality_plot = centrality_df[centrality_df['User ID'] == selected_user_ct]
-    fig_ct, ax_ct = plt.subplots()
-    ax_ct.plot(user_centrality_plot['Date'], user_centrality_plot['Centrality'], marker='o')
-    ax_ct.set_title(f"Betweenness Centrality Over Time: {selected_user_ct}")
-    ax_ct.set_ylabel("Centrality")
-    ax_ct.set_xlabel("Date")
-    st.pyplot(fig_ct)
-
-    st.subheader("🕵️ Explore Ego Network of a User")
-    selected_user = st.selectbox("Select a User ID to visualize ego network", options=sorted(user_nodes))
-    ego_net = nx.ego_graph(user_graph, selected_user)
-    ego_viz = Network(height="500px", width="100%", notebook=False, bgcolor="#f0f0f0", font_color="black")
-    ego_viz.from_nx(ego_net)
-
-    for node in ego_viz.nodes:
-        if node['id'] == selected_user:
-            node['color'] = '#ff0000'
-            node['title'] = f"{node['id']} (Selected User)"
-        else:
-            node['color'] = '#87cefa'
+    st.subheader("🌐 Interactive User Collaboration Network")
+    net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="black")
+    for node in user_graph.nodes():
+        label = f"{node} | Degree: {degree_dict[node]}"
+        title = f"User: {node}\nDegree: {degree_dict[node]}\nCentrality: {centrality[node]:.3f}"
+        color = f"hsl({(cluster_map.get(node, 0) * 37) % 360}, 70%, 70%)" if enable_clustering else "#97c2fc"
+        net.add_node(node, label=label, title=title, color=color)
+    for u, v in user_graph.edges():
+        net.add_edge(u, v)
 
     with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.html') as tmp_file:
-        ego_viz.save_graph(tmp_file.name)
-        components.html(tmp_file.read(), height=500, scrolling=True)
-
-    st.subheader("📅 Project Timeline")
-    proj_df = df.groupby(df['Project ID'])['Date'].min().reset_index()
-    proj_df = proj_df.sort_values("Date")
-    fig5, ax5 = plt.subplots(figsize=(10, 4))
-    ax5.scatter(proj_df['Date'], proj_df['Project ID'], alpha=0.6)
-    ax5.set_xlabel("Start Date")
-    ax5.set_ylabel("Project ID")
-    ax5.set_title("Timeline of Project Initiations")
-    st.pyplot(fig5)
+        net.save_graph(tmp_file.name)
+        components.html(tmp_file.read(), height=600, scrolling=True)
 
 else:
     st.info("👈 Upload a TriNetX usage log file to get started.")
