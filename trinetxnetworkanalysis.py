@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import networkx as nx
@@ -6,11 +7,9 @@ import tempfile
 import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 import seaborn as sns
-
 from networkx.algorithms.community import greedy_modularity_communities
 
 st.set_page_config(page_title="TriNetX Collaboration Dashboard", layout="wide")
-
 st.title("📊 TriNetX Social Network Collaboration Dashboard")
 
 uploaded_file = st.file_uploader("Upload TriNetX Usage Log CSV", type=["csv"])
@@ -32,15 +31,22 @@ if uploaded_file is not None:
     st.sidebar.subheader("Subnetwork Filters")
     urim_only = st.sidebar.checkbox("URIM Only")
     firstgen_only = st.sidebar.checkbox("FirstGen Only")
-    instance_filter = st.sidebar.multiselect("Filter by Instance", sorted(df['Instance'].unique()))
     enable_clustering = st.sidebar.checkbox("Auto-Cluster Users (Community Detection)", value=True)
+
+    if 'Instance' in df.columns:
+        instance_filter = st.sidebar.multiselect("Filter by Instance", sorted(df['Instance'].dropna().unique()))
+        if instance_filter:
+            df = df[df['Instance'].isin(instance_filter)]
+    else:
+        st.warning("⚠️ 'Instance' column not found in the data.")
 
     if urim_only:
         df = df[df['URIM'] == True]
     if firstgen_only:
         df = df[df['FirstGen'] == True]
-    if instance_filter:
-        df = df[df['Instance'].isin(instance_filter)]
+
+    if 'Instance' not in df.columns:
+        st.stop()
 
     B = nx.Graph()
     user_nodes = df['User'].unique()
@@ -53,7 +59,6 @@ if uploaded_file is not None:
 
     user_graph = nx.projected_graph(B, user_nodes)
 
-    # Community detection
     cluster_map = {}
     if enable_clustering:
         communities = list(greedy_modularity_communities(user_graph))
@@ -61,7 +66,6 @@ if uploaded_file is not None:
             for user in group:
                 cluster_map[user] = i
 
-    # Build metrics
     degree_dict = dict(user_graph.degree())
     centrality = nx.betweenness_centrality(user_graph)
     df_metrics = pd.DataFrame({
