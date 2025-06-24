@@ -4,3 +4,4 @@ networkx
 pyvis
 matplotlib
 seaborn
+scipy
