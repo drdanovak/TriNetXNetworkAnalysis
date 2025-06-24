@@ -33,29 +33,29 @@ if uploaded_file is not None:
     firstgen_only = st.sidebar.checkbox("FirstGen Only")
     enable_clustering = st.sidebar.checkbox("Auto-Cluster Users (Community Detection)", value=True)
 
-    if 'Instance' in df.columns:
-        instance_filter = st.sidebar.multiselect("Filter by Instance", sorted(df['Instance'].dropna().unique()))
-        if instance_filter:
-            df = df[df['Instance'].isin(instance_filter)]
+    if 'Project_ID' in df.columns:
+        project_filter = st.sidebar.multiselect("Filter by Project ID", sorted(df['Project_ID'].dropna().unique()))
+        if project_filter:
+            df = df[df['Project_ID'].isin(project_filter)]
     else:
-        st.warning("⚠️ 'Instance' column not found in the data.")
+        st.warning("⚠️ 'Project_ID' column not found in the data.")
 
     if urim_only:
         df = df[df['URIM'] == True]
     if firstgen_only:
         df = df[df['FirstGen'] == True]
 
-    if 'Instance' not in df.columns:
+    if 'Project_ID' not in df.columns:
         st.stop()
 
     B = nx.Graph()
-    user_nodes = df['User'].unique()
-    instance_nodes = df['Instance'].unique()
+    user_nodes = df['User_ID'].unique()
+    project_nodes = df['Project_ID'].unique()
     B.add_nodes_from(user_nodes, bipartite=0, type='user')
-    B.add_nodes_from(instance_nodes, bipartite=1, type='instance')
+    B.add_nodes_from(project_nodes, bipartite=1, type='project')
 
     for _, row in df.iterrows():
-        B.add_edge(row['User'], row['Instance'])
+        B.add_edge(row['User_ID'], row['Project_ID'])
 
     user_graph = nx.projected_graph(B, user_nodes)
 
@@ -69,12 +69,12 @@ if uploaded_file is not None:
     degree_dict = dict(user_graph.degree())
     centrality = nx.betweenness_centrality(user_graph)
     df_metrics = pd.DataFrame({
-        "User": list(degree_dict.keys()),
+        "User_ID": list(degree_dict.keys()),
         "Degree": list(degree_dict.values()),
         "Betweenness Centrality": [centrality[u] for u in degree_dict.keys()],
         "Cluster": [cluster_map.get(u, -1) for u in degree_dict.keys()]
     })
-    merged_df = pd.merge(df_metrics, df[['User', 'Role', 'URIM', 'FirstGen']].drop_duplicates(), on="User", how="left")
+    merged_df = pd.merge(df_metrics, df[['User_ID', 'Role', 'URIM', 'FirstGen']].drop_duplicates(), on="User_ID", how="left")
 
     st.subheader("📋 Collaboration Metrics Table")
     st.dataframe(merged_df)
